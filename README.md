@@ -2,7 +2,7 @@
 
 一个把 AWS SAA 题目转化为可检索学习资料的交互原型。
 
-当前原型包含完整演示闭环：输入题目、查看模拟解析、确认保存、在题库中搜索并重新打开。数据和自定义系统 Prompt 暂存在当前浏览器的 `localStorage` 中，后续阶段会迁移到正式数据库与模型服务。
+当前版本包含完整学习闭环：输入题目、生成解析、确认保存、通过高级检索重新打开，并可从独立知识点页面查看讲解和关联题目。题目、选项、标签、知识点、解析记录和系统 Prompt 已保存到本地 D1 / SQLite 数据库。
 
 ## Prerequisites
 
@@ -23,10 +23,21 @@ This starter does not use `wrangler.jsonc`.
 - 示例题一键填入和题目输入
 - 结构化解析预览
 - 原始题目与解析同时保存
-- 按原文、服务、题型、关键词搜索
+- 数据库分页与“加载更多”
+- 多关键词、AWS 中英文别名和字段权重排序的高级检索
+- 搜索结果关键词高亮
+- 独立知识点列表、详情和关联题目跳转
+- PDF 题库批量导入、重复检测、规则归一化与批末 AI 语义去重
 - 题目详情和删除
 - 可自定义的系统 Prompt
 - AI 候选分类策略
+- 首次启动时自动迁移阶段 1 的浏览器数据
+- DeepSeek V4 Flash 中文结构化解析
+- 未复习、学习中、已掌握三档掌握状态
+
+## 本地 DeepSeek 配置
+
+复制 `.env.example` 为 `.env.local`，填入 `DEEPSEEK_API_KEY` 后重启本地服务。模型固定为 `deepseek-v4-flash`；API Key 只在服务端读取，不会发送到浏览器或写入数据库。
 
 ## Workspace Auth Headers
 
@@ -94,6 +105,11 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 - `npm run build`: verify the vinext build output
 - `npm test`: build the starter and verify its rendered loading skeleton
 - `npm run db:generate`: generate Drizzle migrations after schema changes
+- `npm run import:pdf -- /absolute/path/questions.pdf --dry-run`: 检查 PDF 拆题结果
+- `npm run import:pdf -- /absolute/path/questions.pdf`: 调用现有解析接口并保存题目
+- `npm run consolidate:taxonomy -- --dry-run`: 检查标签与知识点分批归并计划，不调用模型
+- `npm run consolidate:taxonomy`: 分批调用 DeepSeek 合并同义标签与知识点，可从中断处继续
+- `npm run consolidate:taxonomy -- --candidate-pass`: 复核名称高度相似的知识点候选
 
 ## Learn More
 
