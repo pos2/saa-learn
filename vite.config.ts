@@ -26,6 +26,8 @@ export default defineConfig(async ({ mode }) => {
       DEEPSEEK_BASE_URL: localEnv.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
       DEEPSEEK_MODEL: "deepseek-v4-flash",
       DEEPSEEK_THINKING: localEnv.DEEPSEEK_THINKING ?? "enabled",
+      APP_ACCESS_PASSWORD: localEnv.APP_ACCESS_PASSWORD ?? "saa-local",
+      APP_SESSION_SECRET: localEnv.APP_SESSION_SECRET ?? "local-development-session-secret",
     },
     d1_databases: d1
       ? [{ binding: d1, database_name: "site-creator-d1", database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID }]

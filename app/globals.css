@@ -15,6 +15,7 @@ mark { padding: 0 2px; border-radius: 3px; color: inherit; background: #e6f58e; 
 .nav { display: flex; align-items: center; gap: 8px; }
 .nav-link { padding: 10px 14px; color: var(--muted); border: 0; background: transparent; font-size: 14px; border-radius: 9px; }
 .nav-link.active { color: var(--ink); background: #eef1ec; font-weight: 700; }
+.logout-link { text-decoration: none; white-space: nowrap; }
 .count-badge { display: inline-grid; place-items: center; min-width: 20px; height: 20px; margin-left: 5px; padding: 0 5px; border-radius: 10px; color: #52651f; background: var(--mint); font-size: 10px; font-weight: 800; }
 .icon-button { border: 0; background: transparent; width: 40px; height: 40px; color: var(--muted); font-size: 17px; }
 .workspace { width: min(1040px,calc(100% - 40px)); margin: 0 auto; padding: 76px 0 54px; }

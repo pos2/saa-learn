@@ -724,6 +724,7 @@ export default function Home() {
           <button className={`nav-link ${view === "library" || view === "detail" ? "active" : ""}`} onClick={() => navigate("library")}>我的题库 <span className="count-badge">{ready ? totalQuestions : 0}</span></button>
           <button className={`nav-link ${view === "knowledge" || view === "knowledgeDetail" ? "active" : ""}`} onClick={() => navigate("knowledge")}>知识点</button>
           <button className="icon-button" type="button" onClick={() => setSettingsOpen(true)} aria-label="打开系统 Prompt 设置">⚙</button>
+          <a className="nav-link logout-link" href="/auth/logout">退出访问</a>
         </nav>
       </header>
 
