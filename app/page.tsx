@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { DEFAULT_SYSTEM_PROMPT, type Analysis, type AnalysisMeta, type KnowledgePointDetail, type KnowledgePointSummary, type SavedQuestion } from "../lib/domain";
 
-type View = "input" | "analysis" | "library" | "detail" | "knowledge" | "knowledgeDetail";
+type View = "dashboard" | "input" | "analysis" | "library" | "detail" | "knowledge" | "knowledgeDetail";
 
 const STORAGE_KEY = "saa-learn-questions-v1";
 const PROMPT_KEY = "saa-learn-system-prompt-v1";
@@ -16,8 +16,9 @@ type QuestionBrowseContext = {
   label: string;
   questionIds: string[];
   total?: number;
-  returnView: "library" | "knowledgeDetail";
+  returnView: "dashboard" | "library" | "knowledgeDetail";
   returnKnowledgeId?: string;
+  randomFamiliarity?: number;
   search: string;
   mastery: "all" | SavedQuestion["mastery"];
   scrollY: number;
@@ -32,6 +33,9 @@ const masteryLabels: Record<SavedQuestion["mastery"], string> = {
 };
 
 const familiarityLabels = ["完全不熟悉", "刚刚见过", "有些印象", "基本理解", "比较熟悉", "非常熟悉"];
+const familiarityColors = ["#d97863", "#df9b53", "#d9b84f", "#aebc4f", "#789c58", "#39745f"];
+
+type FamiliarityStat = { familiarity: number; count: number };
 
 function semanticTitle(item: SavedQuestion) {
   const stored = item.title.trim();
@@ -67,7 +71,7 @@ function highlightText(text: string, search: string) {
 }
 
 export default function Home() {
-  const [view, setView] = useState<View>("input");
+  const [view, setView] = useState<View>("dashboard");
   const [question, setQuestion] = useState("");
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [analysisRunId, setAnalysisRunId] = useState<string | null>(null);
@@ -80,6 +84,9 @@ export default function Home() {
   const [saved, setSaved] = useState<SavedQuestion[]>([]);
   const [totalQuestions, setTotalQuestions] = useState(0);
   const [totalMatches, setTotalMatches] = useState(0);
+  const [familiarityStats, setFamiliarityStats] = useState<FamiliarityStat[]>(
+    () => Array.from({ length: 6 }, (_, familiarity) => ({ familiarity, count: 0 })),
+  );
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [knowledgePoints, setKnowledgePoints] = useState<KnowledgePointSummary[]>([]);
@@ -130,17 +137,20 @@ export default function Home() {
           }
         }
 
-        const [questionResponse, promptResponse] = await Promise.all([
+        const [questionResponse, promptResponse, dashboardResponse] = await Promise.all([
           fetch(`/api/questions?limit=${PAGE_SIZE}&offset=0`, { cache: "no-store" }),
           fetch("/api/settings/system-prompt", { cache: "no-store" }),
+          fetch("/api/dashboard", { cache: "no-store" }),
         ]);
-        if (!questionResponse.ok || !promptResponse.ok) throw new Error("本地数据库初始化失败");
+        if (!questionResponse.ok || !promptResponse.ok || !dashboardResponse.ok) throw new Error("学习数据初始化失败");
         const questionData = await questionResponse.json() as { questions: SavedQuestion[]; total: number };
         const promptData = await promptResponse.json() as { value: string };
+        const dashboardData = await dashboardResponse.json() as { total: number; counts: FamiliarityStat[] };
         if (!cancelled) {
           setSaved(questionData.questions);
-          setTotalQuestions(questionData.total);
+          setTotalQuestions(dashboardData.total);
           setTotalMatches(questionData.total);
+          setFamiliarityStats(dashboardData.counts);
           setSystemPrompt(promptData.value);
           window.localStorage.removeItem(STORAGE_KEY);
           window.localStorage.removeItem(PROMPT_KEY);
@@ -161,7 +171,11 @@ export default function Home() {
     async function restoreLocation() {
       const params = new URLSearchParams(window.location.search);
       const next = params.get("view") as View | null;
-      if (!next || next === "input" || !["analysis", "library", "detail", "knowledge", "knowledgeDetail"].includes(next)) {
+      if (!next || next === "dashboard" || !["input", "analysis", "library", "detail", "knowledge", "knowledgeDetail"].includes(next)) {
+        setView("dashboard");
+        return;
+      }
+      if (next === "input") {
         setView("input");
         return;
       }
@@ -399,7 +413,7 @@ export default function Home() {
   function navigate(next: View) {
     setView(next);
     const params = new URLSearchParams();
-    if (next !== "input") params.set("view", next);
+    if (next !== "dashboard") params.set("view", next);
     if (next === "library") {
       if (search.trim()) params.set("search", search.trim());
       if (masteryFilter !== "all") params.set("mastery", masteryFilter);
@@ -476,6 +490,7 @@ export default function Home() {
       if (!editingQuestionId) {
         setTotalQuestions((current) => current + 1);
         setTotalMatches((current) => current + 1);
+        setFamiliarityStats((current) => current.map((item) => item.familiarity === 0 ? { ...item, count: item.count + 1 } : item));
       }
       setSelectedId(payload.question.id);
       setEditingQuestionId(payload.question.id);
@@ -493,11 +508,13 @@ export default function Home() {
 
   async function removeQuestion(id: string) {
     try {
+      const removed = saved.find((item) => item.id === id);
       const response = await fetch(`/api/questions/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (!response.ok) throw new Error("删除题目失败");
       setSaved((current) => current.filter((item) => item.id !== id));
       setTotalQuestions((current) => Math.max(0, current - 1));
       setTotalMatches((current) => Math.max(0, current - 1));
+      if (removed) setFamiliarityStats((current) => current.map((item) => item.familiarity === removed.familiarity ? { ...item, count: Math.max(0, item.count - 1) } : item));
       navigate("library");
     } catch (error) {
       setToast(error instanceof Error ? error.message : "删除题目失败");
@@ -584,10 +601,12 @@ export default function Home() {
     }
   }
 
-  async function openRandomQuestion(existingContext?: QuestionBrowseContext) {
+  async function openRandomQuestion(existingContext?: QuestionBrowseContext, familiarity?: number, total?: number) {
     try {
       const searchParams = new URLSearchParams();
-      existingContext?.questionIds.forEach((id) => searchParams.append("exclude", id));
+      existingContext?.questionIds.slice(-200).forEach((id) => searchParams.append("exclude", id));
+      const selectedFamiliarity = existingContext?.randomFamiliarity ?? familiarity;
+      if (selectedFamiliarity !== undefined) searchParams.set("familiarity", String(selectedFamiliarity));
       const response = await fetch(`/api/questions/random${searchParams.size ? `?${searchParams}` : ""}`, { cache: "no-store" });
       const payload = await response.json() as { question?: SavedQuestion; error?: string };
       if (!response.ok || !payload.question) throw new Error(payload.error ?? "随机选题失败");
@@ -595,8 +614,12 @@ export default function Home() {
       const context: QuestionBrowseContext = existingContext
         ? { ...existingContext, questionIds: [...existingContext.questionIds, record.id] }
         : {
-            id: window.crypto.randomUUID(), source: "random", label: "低熟悉度随机练习",
-            questionIds: [record.id], total: 1, returnView: "library", search, mastery: masteryFilter, scrollY: window.scrollY,
+            id: window.crypto.randomUUID(), source: "random",
+            label: selectedFamiliarity === undefined ? "低熟悉度随机练习" : `${selectedFamiliarity} 星题目`,
+            questionIds: [record.id], total: selectedFamiliarity === undefined ? 1 : total,
+            returnView: selectedFamiliarity === undefined ? "library" : "dashboard",
+            randomFamiliarity: selectedFamiliarity,
+            search, mastery: masteryFilter, scrollY: window.scrollY,
           };
       persistQuestionContext(context);
       setSaved((current) => current.some((item) => item.id === record.id) ? current : [...current, record]);
@@ -632,14 +655,15 @@ export default function Home() {
       }
       setView("knowledgeDetail");
     } else {
-      setView("library");
+      setView(questionContext.returnView === "dashboard" ? "dashboard" : "library");
     }
     setPendingScrollY(questionContext.scrollY);
     const params = new URLSearchParams({ view: questionContext.returnView });
+    if (questionContext.returnView === "dashboard") params.delete("view");
     if (questionContext.returnView === "library" && questionContext.search.trim()) params.set("search", questionContext.search.trim());
     if (questionContext.returnView === "library" && questionContext.mastery !== "all") params.set("mastery", questionContext.mastery);
     if (questionContext.returnKnowledgeId) params.set("knowledge", questionContext.returnKnowledgeId);
-    window.history.pushState({ view: questionContext.returnView }, "", `${window.location.pathname}?${params}`);
+    window.history.pushState({ view: questionContext.returnView }, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
   }
 
   function startAnother() {
@@ -681,6 +705,7 @@ export default function Home() {
 
   async function changeFamiliarity(familiarity: number) {
     if (!selected) return;
+    const previousFamiliarity = selected.familiarity;
     try {
       const response = await fetch(`/api/questions/${encodeURIComponent(selected.id)}`, {
         method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ familiarity }),
@@ -688,6 +713,11 @@ export default function Home() {
       const payload = await response.json() as { question?: SavedQuestion; error?: string };
       if (!response.ok || !payload.question) throw new Error(payload.error ?? "更新熟悉度失败");
       setSaved((current) => current.map((item) => item.id === selected.id ? payload.question! : item));
+      if (previousFamiliarity !== familiarity) {
+        setFamiliarityStats((current) => current.map((item) => item.familiarity === previousFamiliarity
+          ? { ...item, count: Math.max(0, item.count - 1) }
+          : item.familiarity === familiarity ? { ...item, count: item.count + 1 } : item));
+      }
       setToast(`熟悉度已设为 ${familiarity} 星 · ${familiarityLabels[familiarity]}`);
     } catch (error) {
       setToast(error instanceof Error ? error.message : "更新熟悉度失败");
@@ -712,14 +742,19 @@ export default function Home() {
   const currentQuestion = view === "detail" ? selected?.original : question;
   const currentAnalysis = view === "detail" ? selected?.analysis : analysis;
   const currentAnalysisMeta = view === "detail" ? selected?.analysisMeta : analysisMeta;
+  const lowFamiliarityCount = familiarityStats.slice(0, 3).reduce((sum, item) => sum + item.count, 0);
+  const averageFamiliarity = totalQuestions
+    ? familiarityStats.reduce((sum, item) => sum + item.familiarity * item.count, 0) / totalQuestions
+    : 0;
 
   return (
     <main className="app-shell">
       <header className="topbar">
-        <button className="brand plain-button" onClick={() => navigate("input")} aria-label="SAA Learn 首页">
+        <button className="brand plain-button" onClick={() => navigate("dashboard")} aria-label="SAA Learn 学习概览">
           <span className="brand-mark">S</span><span>SAA Learn</span>
         </button>
         <nav className="nav" aria-label="主导航">
+          <button className={`nav-link ${view === "dashboard" ? "active" : ""}`} onClick={() => navigate("dashboard")}>学习概览</button>
           <button className={`nav-link ${view === "input" || view === "analysis" ? "active" : ""}`} onClick={() => navigate("input")}>题目解析</button>
           <button className={`nav-link ${view === "library" || view === "detail" ? "active" : ""}`} onClick={() => navigate("library")}>我的题库 <span className="count-badge">{ready ? totalQuestions : 0}</span></button>
           <button className={`nav-link ${view === "knowledge" || view === "knowledgeDetail" ? "active" : ""}`} onClick={() => navigate("knowledge")}>知识点</button>
@@ -727,6 +762,59 @@ export default function Home() {
           <a className="nav-link logout-link" href="/auth/logout">退出访问</a>
         </nav>
       </header>
+
+      {view === "dashboard" && (
+        <section className="workspace dashboard-view">
+          <div className="dashboard-hero">
+            <div>
+              <p className="eyebrow">LEARNING DASHBOARD</p>
+              <h1>你的 SAA<br />熟悉度地图。</h1>
+              <p className="intro-copy">从最不熟悉的部分开始复习，让每一次随机抽题都更接近薄弱点。</p>
+            </div>
+            <div className="dashboard-summary" aria-label="题库学习概览">
+              <div><span>题库总数</span><strong>{ready ? totalQuestions : "—"}</strong><small>道题</small></div>
+              <div><span>平均熟悉度</span><strong>{ready ? averageFamiliarity.toFixed(1) : "—"}</strong><small>/ 5 星</small></div>
+              <div className="priority-summary"><span>优先复习</span><strong>{ready ? lowFamiliarityCount : "—"}</strong><small>道 · 0–2 星</small></div>
+            </div>
+          </div>
+
+          <section className="distribution-panel" aria-labelledby="distribution-title">
+            <div className="distribution-heading">
+              <div><span className="section-caption">熟悉度分布</span><h2 id="distribution-title">按评级选择今天的复习范围</h2></div>
+              <button className="secondary-button" type="button" disabled={!totalQuestions} onClick={() => void openRandomQuestion()}>✦ 智能随机复习</button>
+            </div>
+            <div className="distribution-bar" aria-label="各熟悉度题目占比">
+              {familiarityStats.map((item) => <span key={item.familiarity} style={{ flexGrow: item.count, background: familiarityColors[item.familiarity] }} title={`${item.familiarity} 星：${item.count} 道`} />)}
+              {!totalQuestions && <span className="distribution-empty" />}
+            </div>
+            <div className="rating-grid">
+              {familiarityStats.map((item) => {
+                const percentage = totalQuestions ? Math.round(item.count / totalQuestions * 100) : 0;
+                return <button
+                  type="button"
+                  className="rating-card"
+                  key={item.familiarity}
+                  disabled={!item.count}
+                  onClick={() => void openRandomQuestion(undefined, item.familiarity, item.count)}
+                  style={{ "--rating-color": familiarityColors[item.familiarity] } as React.CSSProperties}
+                  aria-label={`随机复习 ${item.familiarity} 星题目，共 ${item.count} 道`}
+                >
+                  <span className="rating-card-top"><strong>{item.familiarity}<small> 星</small></strong><em>{percentage}%</em></span>
+                  <span className="rating-label">{familiarityLabels[item.familiarity]}</span>
+                  <span className="rating-count"><b>{item.count}</b> 道题</span>
+                  <span className="rating-progress"><i style={{ width: `${percentage}%` }} /></span>
+                  <span className="rating-action">{item.count ? "随机浏览 →" : "暂无题目"}</span>
+                </button>;
+              })}
+            </div>
+          </section>
+
+          <div className="dashboard-footer-actions">
+            <p>新题默认归入 0 星，复习后可以在详情页随时调整评级。</p>
+            <button className="primary-button" type="button" onClick={startAnother}>＋ 解析新题目</button>
+          </div>
+        </section>
+      )}
 
       {view === "input" && (
         <section className="workspace input-view">

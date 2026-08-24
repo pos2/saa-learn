@@ -254,13 +254,39 @@ export async function updateFamiliarity(id: string, familiarity: number) {
   return getQuestion(id);
 }
 
-export async function getWeightedRandomQuestion(excludeIds: string[] = []) {
+export async function getFamiliarityStats() {
   await ensureDatabase();
-  const exclusions = Array.from(new Set(excludeIds.filter(Boolean))).slice(-200);
-  const where = exclusions.length ? `WHERE id NOT IN (${exclusions.map(() => "?").join(",")})` : "";
+  const rows = await getD1().prepare(`SELECT familiarity, COUNT(*) AS count
+    FROM questions GROUP BY familiarity ORDER BY familiarity`).all<{ familiarity: number; count: number }>();
+  const counts = Array.from({ length: 6 }, (_, familiarity) => ({ familiarity, count: 0 }));
+  for (const row of rows.results ?? []) {
+    const familiarity = Math.min(5, Math.max(0, Math.round(row.familiarity ?? 0)));
+    counts[familiarity].count += Number(row.count) || 0;
+  }
+  return { total: counts.reduce((sum, item) => sum + item.count, 0), counts };
+}
+
+export async function getWeightedRandomQuestion(excludeIds: string[] = [], familiarity?: number) {
+  await ensureDatabase();
+  const allExclusions = new Set(excludeIds.filter(Boolean));
+  const requestedFamiliarity = familiarity === undefined
+    ? null
+    : Math.min(5, Math.max(0, Math.round(familiarity)));
+  const queryExclusions = requestedFamiliarity === null ? Array.from(allExclusions).slice(-200) : [];
+  const clauses: string[] = [];
+  const bindings: Array<string | number> = [];
+  if (requestedFamiliarity !== null) {
+    clauses.push("familiarity = ?");
+    bindings.push(requestedFamiliarity);
+  }
+  if (queryExclusions.length) {
+    clauses.push(`id NOT IN (${queryExclusions.map(() => "?").join(",")})`);
+    bindings.push(...queryExclusions);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const rows = await getD1().prepare(`SELECT id, familiarity FROM questions ${where}`)
-    .bind(...exclusions).all<{ id: string; familiarity: number }>();
-  const candidates = rows.results ?? [];
+    .bind(...bindings).all<{ id: string; familiarity: number }>();
+  const candidates = (rows.results ?? []).filter((item) => !allExclusions.has(item.id));
   if (!candidates.length) return null;
   const weighted = candidates.map((item) => ({ ...item, weight: familiarityWeight(item.familiarity ?? 0) }));
   const totalWeight = weighted.reduce((sum, item) => sum + item.weight, 0);
