@@ -105,6 +105,8 @@ export default function Home() {
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
   const [ready, setReady] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingMastery, setIsSavingMastery] = useState(false);
+  const [isSavingFamiliarity, setIsSavingFamiliarity] = useState(false);
   const [questionContext, setQuestionContext] = useState<QuestionBrowseContext | null>(() => {
     if (typeof window === "undefined") return null;
     try {
@@ -693,39 +695,57 @@ export default function Home() {
   }
 
   async function changeMastery(mastery: SavedQuestion["mastery"]) {
-    if (!selected) return;
+    if (!selected || isSavingMastery || selected.mastery === mastery) return;
+    const questionId = selected.id;
+    const previousMastery = selected.mastery;
+    setIsSavingMastery(true);
+    setSaved((current) => current.map((item) => item.id === questionId ? { ...item, mastery } : item));
     try {
-      const response = await fetch(`/api/questions/${encodeURIComponent(selected.id)}`, {
+      const response = await fetch(`/api/questions/${encodeURIComponent(questionId)}`, {
         method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ mastery }),
       });
-      const payload = await response.json() as { question?: SavedQuestion; error?: string };
-      if (!response.ok || !payload.question) throw new Error(payload.error ?? "更新掌握状态失败");
-      setSaved((current) => current.map((item) => item.id === selected.id ? payload.question! : item));
+      const payload = await response.json() as { update?: { id: string; mastery: SavedQuestion["mastery"] }; error?: string };
+      if (!response.ok || payload.update?.id !== questionId || payload.update.mastery !== mastery) {
+        throw new Error(payload.error ?? "更新掌握状态失败");
+      }
       setToast(`已标记为${mastery === "mastered" ? "已掌握" : mastery === "learning" ? "学习中" : "未复习"}`);
-      window.setTimeout(() => setToast(""), 1800);
     } catch (error) {
+      setSaved((current) => current.map((item) => item.id === questionId && item.mastery === mastery ? { ...item, mastery: previousMastery } : item));
       setToast(error instanceof Error ? error.message : "更新掌握状态失败");
+    } finally {
+      setIsSavingMastery(false);
     }
   }
 
   async function changeFamiliarity(familiarity: number) {
-    if (!selected) return;
+    if (!selected || isSavingFamiliarity || selected.familiarity === familiarity) return;
+    const questionId = selected.id;
     const previousFamiliarity = selected.familiarity;
+    const updateStats = (from: number, to: number) => {
+      if (from === to) return;
+      setFamiliarityStats((current) => current.map((item) => item.familiarity === from
+        ? { ...item, count: Math.max(0, item.count - 1) }
+        : item.familiarity === to ? { ...item, count: item.count + 1 } : item));
+    };
+    setIsSavingFamiliarity(true);
+    setSaved((current) => current.map((item) => item.id === questionId ? { ...item, familiarity } : item));
+    updateStats(previousFamiliarity, familiarity);
     try {
-      const response = await fetch(`/api/questions/${encodeURIComponent(selected.id)}`, {
+      const response = await fetch(`/api/questions/${encodeURIComponent(questionId)}`, {
         method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ familiarity }),
       });
-      const payload = await response.json() as { question?: SavedQuestion; error?: string };
-      if (!response.ok || !payload.question) throw new Error(payload.error ?? "更新熟悉度失败");
-      setSaved((current) => current.map((item) => item.id === selected.id ? payload.question! : item));
-      if (previousFamiliarity !== familiarity) {
-        setFamiliarityStats((current) => current.map((item) => item.familiarity === previousFamiliarity
-          ? { ...item, count: Math.max(0, item.count - 1) }
-          : item.familiarity === familiarity ? { ...item, count: item.count + 1 } : item));
+      const payload = await response.json() as { update?: { id: string; familiarity: number }; error?: string };
+      if (!response.ok || payload.update?.id !== questionId || payload.update.familiarity !== familiarity) {
+        throw new Error(payload.error ?? "更新熟悉度失败");
       }
       setToast(`熟悉度已设为 ${familiarity} 星 · ${familiarityLabels[familiarity]}`);
     } catch (error) {
+      setSaved((current) => current.map((item) => item.id === questionId && item.familiarity === familiarity
+        ? { ...item, familiarity: previousFamiliarity } : item));
+      updateStats(familiarity, previousFamiliarity);
       setToast(error instanceof Error ? error.message : "更新熟悉度失败");
+    } finally {
+      setIsSavingFamiliarity(false);
     }
   }
 
@@ -926,17 +946,19 @@ export default function Home() {
           {view === "detail" && selected && <section className="mastery-panel" aria-label="掌握状态">
             <div><span className="section-caption">掌握状态</span><strong>{masteryLabels[selected.mastery]}</strong></div>
             <div className="mastery-switch">
-              {(Object.keys(masteryLabels) as SavedQuestion["mastery"][]).map((status) => <button key={status} className={selected.mastery === status ? "active" : ""} onClick={() => changeMastery(status)}>{masteryLabels[status]}</button>)}
+              {(Object.keys(masteryLabels) as SavedQuestion["mastery"][]).map((status) => <button key={status} disabled={isSavingMastery} className={selected.mastery === status ? "active" : ""} onClick={() => changeMastery(status)}>{masteryLabels[status]}</button>)}
+              {isSavingMastery && <span className="save-state" role="status">保存中…</span>}
             </div>
           </section>}
 
           {view === "detail" && selected && <section className="familiarity-panel" aria-label="题目熟悉度">
             <div><span className="section-caption">熟悉程度</span><strong>{selected.familiarity} 星 · {familiarityLabels[selected.familiarity]}</strong><p>评级越低，随机复习时越容易抽到。</p></div>
             <div className="familiarity-control">
-              <button type="button" className={selected.familiarity === 0 ? "zero active" : "zero"} onClick={() => void changeFamiliarity(0)} aria-label="设为 0 星，完全不熟悉">0 星</button>
+              <button type="button" disabled={isSavingFamiliarity} className={selected.familiarity === 0 ? "zero active" : "zero"} onClick={() => void changeFamiliarity(0)} aria-label="设为 0 星，完全不熟悉">0 星</button>
               <div className="star-rating" aria-label={`当前熟悉度 ${selected.familiarity} 星`}>
-                {[1, 2, 3, 4, 5].map((rating) => <button type="button" key={rating} className={rating <= selected.familiarity ? "active" : ""} onClick={() => void changeFamiliarity(rating)} aria-label={`设为 ${rating} 星`}>★</button>)}
+                {[1, 2, 3, 4, 5].map((rating) => <button type="button" disabled={isSavingFamiliarity} key={rating} className={rating <= selected.familiarity ? "active" : ""} onClick={() => void changeFamiliarity(rating)} aria-label={`设为 ${rating} 星`}>★</button>)}
               </div>
+              {isSavingFamiliarity && <span className="save-state" role="status">保存中…</span>}
             </div>
           </section>}
 

@@ -29,14 +29,14 @@ export async function PATCH(request: Request, context: Context) {
     const { mastery, familiarity } = (await request.json()) as { mastery?: SavedQuestion["mastery"]; familiarity?: number };
     if (mastery !== undefined) {
       if (!["unreviewed", "learning", "mastered"].includes(mastery)) return Response.json({ error: "无效的掌握状态" }, { status: 400 });
-      const question = await updateMastery(id, mastery);
-      return question ? Response.json({ question }) : Response.json({ error: "题目不存在" }, { status: 404 });
+      const update = await updateMastery(id, mastery);
+      return update ? Response.json({ update }) : Response.json({ error: "题目不存在" }, { status: 404 });
     }
     if (typeof familiarity !== "number" || !Number.isInteger(familiarity) || familiarity < 0 || familiarity > 5) {
       return Response.json({ error: "熟悉度必须是 0 到 5 的整数" }, { status: 400 });
     }
-    const question = await updateFamiliarity(id, familiarity);
-    return question ? Response.json({ question }) : Response.json({ error: "题目不存在" }, { status: 404 });
+    const update = await updateFamiliarity(id, familiarity);
+    return update ? Response.json({ update }) : Response.json({ error: "题目不存在" }, { status: 404 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "更新掌握状态失败" }, { status: 500 });
   }

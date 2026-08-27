@@ -242,19 +242,21 @@ export async function deleteQuestion(id: string) {
 
 export async function updateMastery(id: string, mastery: SavedQuestion["mastery"]) {
   await ensureDatabase();
+  const updatedAt = new Date().toISOString();
   const result = await getD1().prepare("UPDATE questions SET mastery = ?, updated_at = ? WHERE id = ?")
-    .bind(mastery, new Date().toISOString(), id).run();
+    .bind(mastery, updatedAt, id).run();
   if (!result.meta.changes) return null;
-  return getQuestion(id);
+  return { id, mastery, updatedAt };
 }
 
 export async function updateFamiliarity(id: string, familiarity: number) {
   await ensureDatabase();
   const rating = Math.min(5, Math.max(0, Math.round(familiarity)));
+  const updatedAt = new Date().toISOString();
   const result = await getD1().prepare("UPDATE questions SET familiarity = ?, updated_at = ? WHERE id = ?")
-    .bind(rating, new Date().toISOString(), id).run();
+    .bind(rating, updatedAt, id).run();
   if (!result.meta.changes) return null;
-  return getQuestion(id);
+  return { id, familiarity: rating, updatedAt };
 }
 
 export async function getFamiliarityStats() {
