@@ -95,6 +95,61 @@ const statements = [
 
 let initialized: Promise<void> | null = null;
 
+const schemaProbe = `SELECT
+  q.id, q.mastery, q.familiarity,
+  qo.content,
+  k.exam_cue,
+  qk.sort_order AS knowledge_sort_order,
+  t.kind,
+  qt.tag_id,
+  ar.prompt_tokens, ar.completion_tokens, ar.reasoning_tokens,
+  ar.total_tokens, ar.attempt_count, ar.latency_ms,
+  s.value
+FROM questions q
+LEFT JOIN question_options qo ON 1 = 0
+LEFT JOIN knowledge_points k ON 1 = 0
+LEFT JOIN question_knowledge_points qk ON 1 = 0
+LEFT JOIN tags t ON 1 = 0
+LEFT JOIN question_tags qt ON 1 = 0
+LEFT JOIN ai_analysis_runs ar ON 1 = 0
+LEFT JOIN app_settings s ON 1 = 0
+LIMIT 0`;
+
+function isMissingSchemaError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("no such table") || message.includes("no such column");
+}
+
+function isDuplicateColumnError(error: unknown) {
+  return error instanceof Error && error.message.toLowerCase().includes("duplicate column");
+}
+
+async function initializeMissingSchema(d1: D1Database) {
+  await d1.batch(statements.map((statement) => d1.prepare(statement)));
+  const legacyColumns = [
+    ["questions", "mastery TEXT DEFAULT 'unreviewed' NOT NULL"],
+    ["questions", "familiarity INTEGER DEFAULT 0 NOT NULL"],
+    ["ai_analysis_runs", "prompt_tokens INTEGER DEFAULT 0 NOT NULL"],
+    ["ai_analysis_runs", "completion_tokens INTEGER DEFAULT 0 NOT NULL"],
+    ["ai_analysis_runs", "reasoning_tokens INTEGER DEFAULT 0 NOT NULL"],
+    ["ai_analysis_runs", "total_tokens INTEGER DEFAULT 0 NOT NULL"],
+    ["ai_analysis_runs", "attempt_count INTEGER DEFAULT 1 NOT NULL"],
+    ["ai_analysis_runs", "latency_ms INTEGER DEFAULT 0 NOT NULL"],
+  ] as const;
+  for (const [table, column] of legacyColumns) {
+    try {
+      await d1.prepare(`ALTER TABLE ${table} ADD COLUMN ${column}`).run();
+    } catch (error) {
+      if (!isDuplicateColumnError(error)) throw error;
+    }
+  }
+  await d1.batch([
+    d1.prepare("CREATE INDEX IF NOT EXISTS idx_questions_mastery_updated_at ON questions (mastery, updated_at)"),
+    d1.prepare("PRAGMA optimize"),
+  ]);
+}
+
 export function getD1() {
   if (!env.DB) throw new Error("本地数据库尚未启用，请确认 .openai/hosting.json 的 d1 为 DB。");
   return env.DB;
@@ -104,35 +159,13 @@ export async function ensureDatabase() {
   if (!initialized) {
     initialized = (async () => {
       const d1 = getD1();
-      await d1.prepare("PRAGMA foreign_keys = ON").run();
-      for (const statement of statements) await d1.prepare(statement).run();
       try {
-        await d1.prepare("ALTER TABLE questions ADD COLUMN mastery TEXT DEFAULT 'unreviewed' NOT NULL").run();
+        await d1.prepare(schemaProbe).all();
+        return;
       } catch (error) {
-        if (!(error instanceof Error) || !error.message.toLowerCase().includes("duplicate column")) throw error;
+        if (!isMissingSchemaError(error)) throw error;
       }
-      try {
-        await d1.prepare("ALTER TABLE questions ADD COLUMN familiarity INTEGER DEFAULT 0 NOT NULL").run();
-      } catch (error) {
-        if (!(error instanceof Error) || !error.message.toLowerCase().includes("duplicate column")) throw error;
-      }
-      const analysisRunColumns = [
-        "prompt_tokens INTEGER DEFAULT 0 NOT NULL",
-        "completion_tokens INTEGER DEFAULT 0 NOT NULL",
-        "reasoning_tokens INTEGER DEFAULT 0 NOT NULL",
-        "total_tokens INTEGER DEFAULT 0 NOT NULL",
-        "attempt_count INTEGER DEFAULT 1 NOT NULL",
-        "latency_ms INTEGER DEFAULT 0 NOT NULL",
-      ];
-      for (const column of analysisRunColumns) {
-        try {
-          await d1.prepare(`ALTER TABLE ai_analysis_runs ADD COLUMN ${column}`).run();
-        } catch (error) {
-          if (!(error instanceof Error) || !error.message.toLowerCase().includes("duplicate column")) throw error;
-        }
-      }
-      await d1.prepare("CREATE INDEX IF NOT EXISTS idx_questions_mastery_updated_at ON questions (mastery, updated_at)").run();
-      await d1.prepare("PRAGMA optimize").run();
+      await initializeMissingSchema(d1);
     })().catch((error) => {
       initialized = null;
       throw error;

@@ -89,6 +89,7 @@ export default function Home() {
   );
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isOpeningRandom, setIsOpeningRandom] = useState(false);
   const [knowledgePoints, setKnowledgePoints] = useState<KnowledgePointSummary[]>([]);
   const [knowledgeSearch, setKnowledgeSearch] = useState("");
   const [totalKnowledge, setTotalKnowledge] = useState(0);
@@ -602,6 +603,8 @@ export default function Home() {
   }
 
   async function openRandomQuestion(existingContext?: QuestionBrowseContext, familiarity?: number, total?: number) {
+    if (isOpeningRandom) return;
+    setIsOpeningRandom(true);
     try {
       const searchParams = new URLSearchParams();
       existingContext?.questionIds.slice(-200).forEach((id) => searchParams.append("exclude", id));
@@ -630,6 +633,8 @@ export default function Home() {
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "随机选题失败");
+    } finally {
+      setIsOpeningRandom(false);
     }
   }
 
@@ -781,7 +786,7 @@ export default function Home() {
           <section className="distribution-panel" aria-labelledby="distribution-title">
             <div className="distribution-heading">
               <div><span className="section-caption">熟悉度分布</span><h2 id="distribution-title">按评级选择今天的复习范围</h2></div>
-              <button className="secondary-button" type="button" disabled={!totalQuestions} onClick={() => void openRandomQuestion()}>✦ 智能随机复习</button>
+              <button className="secondary-button" type="button" disabled={!totalQuestions || isOpeningRandom} onClick={() => void openRandomQuestion()}>{isOpeningRandom ? "正在抽取题目…" : "✦ 智能随机复习"}</button>
             </div>
             <div className="distribution-bar" aria-label="各熟悉度题目占比">
               {familiarityStats.map((item) => <span key={item.familiarity} style={{ flexGrow: item.count, background: familiarityColors[item.familiarity] }} title={`${item.familiarity} 星：${item.count} 道`} />)}
@@ -794,7 +799,7 @@ export default function Home() {
                   type="button"
                   className="rating-card"
                   key={item.familiarity}
-                  disabled={!item.count}
+                  disabled={!item.count || isOpeningRandom}
                   onClick={() => void openRandomQuestion(undefined, item.familiarity, item.count)}
                   style={{ "--rating-color": familiarityColors[item.familiarity] } as React.CSSProperties}
                   aria-label={`随机复习 ${item.familiarity} 星题目，共 ${item.count} 道`}
@@ -803,7 +808,7 @@ export default function Home() {
                   <span className="rating-label">{familiarityLabels[item.familiarity]}</span>
                   <span className="rating-count"><b>{item.count}</b> 道题</span>
                   <span className="rating-progress"><i style={{ width: `${percentage}%` }} /></span>
-                  <span className="rating-action">{item.count ? "随机浏览 →" : "暂无题目"}</span>
+                  <span className="rating-action">{!item.count ? "暂无题目" : isOpeningRandom ? "正在抽取…" : "随机浏览 →"}</span>
                 </button>;
               })}
             </div>
@@ -853,7 +858,7 @@ export default function Home() {
           {view === "detail" && contextProgress && <nav className="question-context-nav" aria-label="当前题组导航">
             <button type="button" disabled={!previousQuestionId} onClick={() => void openContextQuestion(previousQuestionId)}>← 上一题</button>
             <div><span>{returnLabel}</span><strong>第 {contextProgress} 题</strong></div>
-            <button type="button" disabled={!canLoadNextQuestion} onClick={() => void openNextContextQuestion()}>下一题 →</button>
+            <button type="button" disabled={!canLoadNextQuestion || isOpeningRandom} onClick={() => void openNextContextQuestion()}>{isOpeningRandom ? "抽取中…" : "下一题 →"}</button>
           </nav>}
           <div className="result-hero">
             <div><p className="eyebrow">{view === "detail" ? "题目详情" : "解析完成"}</p><h1>{view === "detail" && selected ? semanticTitle(selected) : "答案不只是一个选项。"}</h1></div>
@@ -959,7 +964,7 @@ export default function Home() {
 
       {view === "library" && (
         <section className="workspace library-view" id="library">
-          <div className="library-header"><div><p className="eyebrow">PERSONAL QUESTION BANK</p><h1>我的题库</h1><p className="intro-copy">从题目原文、知识点、服务和候选分类中检索。</p></div><div className="action-group"><button className="secondary-button random-study-button" onClick={() => void openRandomQuestion()}>✦ 低熟悉度随机复习</button><button className="primary-button" onClick={startAnother}>＋ 添加题目</button></div></div>
+          <div className="library-header"><div><p className="eyebrow">PERSONAL QUESTION BANK</p><h1>我的题库</h1><p className="intro-copy">从题目原文、知识点、服务和候选分类中检索。</p></div><div className="action-group"><button className="secondary-button random-study-button" disabled={isOpeningRandom} onClick={() => void openRandomQuestion()}>{isOpeningRandom ? "正在抽取题目…" : "✦ 低熟悉度随机复习"}</button><button className="primary-button" onClick={startAnother}>＋ 添加题目</button></div></div>
           <div className="search-box"><span>⌕</span><label className="sr-only" htmlFor="search">搜索题库</label><input id="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 S3、私有子网、成本优化…" />{search && <button onClick={() => setSearch("")} aria-label="清空搜索">×</button>}</div>
           <p className="search-hint">支持多个关键词、AWS 中英文别名和相关度排序；多个关键词需要同时命中。</p>
           <div className="filter-row" aria-label="按掌握状态筛选">

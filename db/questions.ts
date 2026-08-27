@@ -45,20 +45,23 @@ function extractOptionContent(original: string, label: string) {
 
 async function hydrateQuestion(row: QuestionRow): Promise<SavedQuestion> {
   const d1 = getD1();
-  const [options, tagRows, knowledgeRows, analysisRun] = await Promise.all([
-    d1.prepare("SELECT label, content, explanation, is_correct FROM question_options WHERE question_id = ? ORDER BY sort_order, id").bind(row.id).all<OptionRow>(),
+  const [optionsResult, tagResult, knowledgeResult, analysisResult] = await d1.batch([
+    d1.prepare("SELECT label, content, explanation, is_correct FROM question_options WHERE question_id = ? ORDER BY sort_order, id").bind(row.id),
     d1.prepare(`SELECT t.name, t.kind FROM tags t
       INNER JOIN question_tags qt ON qt.tag_id = t.id
-      WHERE qt.question_id = ? ORDER BY t.kind, t.name`).bind(row.id).all<TagRow>(),
+      WHERE qt.question_id = ? ORDER BY t.kind, t.name`).bind(row.id),
     d1.prepare(`SELECT k.id, k.name, k.description, k.exam_cue FROM knowledge_points k
       INNER JOIN question_knowledge_points qk ON qk.knowledge_point_id = k.id
-      WHERE qk.question_id = ? ORDER BY qk.sort_order, k.name`).bind(row.id).all<KnowledgeRow>(),
+      WHERE qk.question_id = ? ORDER BY qk.sort_order, k.name`).bind(row.id),
     d1.prepare(`SELECT id, model, prompt_tokens, completion_tokens, reasoning_tokens, total_tokens, attempt_count, latency_ms
       FROM ai_analysis_runs WHERE question_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1`)
-      .bind(row.id).first<AnalysisRunRow>(),
+      .bind(row.id),
   ]);
 
-  const tags = tagRows.results ?? [];
+  const options = (optionsResult.results ?? []) as OptionRow[];
+  const tags = (tagResult.results ?? []) as TagRow[];
+  const knowledgeRows = (knowledgeResult.results ?? []) as KnowledgeRow[];
+  const analysisRun = analysisResult.results?.[0] as AnalysisRunRow | undefined;
   return {
     id: row.id,
     sequence: row.sequence,
@@ -84,8 +87,8 @@ async function hydrateQuestion(row: QuestionRow): Promise<SavedQuestion> {
       services: tags.filter((tag) => tag.kind === "service").map((tag) => tag.name),
       topics: tags.filter((tag) => tag.kind === "topic").map((tag) => tag.name),
       keywords: tags.filter((tag) => tag.kind === "keyword").map((tag) => tag.name),
-      optionNotes: (options.results ?? []).map((option) => ({ label: option.label, content: option.content ?? undefined, correct: Boolean(option.is_correct), text: option.explanation })),
-      knowledge: (knowledgeRows.results ?? []).map((item) => ({ id: item.id, title: item.name, body: item.description, cue: item.exam_cue })),
+      optionNotes: options.map((option) => ({ label: option.label, content: option.content ?? undefined, correct: Boolean(option.is_correct), text: option.explanation })),
+      knowledge: knowledgeRows.map((item) => ({ id: item.id, title: item.name, body: item.description, cue: item.exam_cue })),
     },
   };
 }
@@ -272,7 +275,7 @@ export async function getWeightedRandomQuestion(excludeIds: string[] = [], famil
   const requestedFamiliarity = familiarity === undefined
     ? null
     : Math.min(5, Math.max(0, Math.round(familiarity)));
-  const queryExclusions = requestedFamiliarity === null ? Array.from(allExclusions).slice(-200) : [];
+  const queryExclusions = Array.from(allExclusions).slice(-200);
   const clauses: string[] = [];
   const bindings: Array<string | number> = [];
   if (requestedFamiliarity !== null) {
@@ -284,6 +287,11 @@ export async function getWeightedRandomQuestion(excludeIds: string[] = [], famil
     bindings.push(...queryExclusions);
   }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  if (requestedFamiliarity !== null) {
+    const candidate = await getD1().prepare(`SELECT id FROM questions ${where} ORDER BY RANDOM() LIMIT 1`)
+      .bind(...bindings).first<{ id: string }>();
+    return candidate ? getQuestion(candidate.id) : null;
+  }
   const rows = await getD1().prepare(`SELECT id, familiarity FROM questions ${where}`)
     .bind(...bindings).all<{ id: string; familiarity: number }>();
   const candidates = (rows.results ?? []).filter((item) => !allExclusions.has(item.id));
