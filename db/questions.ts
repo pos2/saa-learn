@@ -288,9 +288,15 @@ export async function getWeightedRandomQuestion(excludeIds: string[] = [], famil
   }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   if (requestedFamiliarity !== null) {
-    const candidate = await getD1().prepare(`SELECT id FROM questions ${where} ORDER BY RANDOM() LIMIT 1`)
-      .bind(...bindings).first<{ id: string }>();
-    return candidate ? getQuestion(candidate.id) : null;
+    const candidate = await getD1().prepare(`WITH candidate AS (
+        SELECT id FROM questions ${where} ORDER BY RANDOM() LIMIT 1
+      )
+      SELECT q.id, q.original_text, q.title, q.answer, q.summary, q.mastery, q.familiarity, q.created_at,
+        1 + (SELECT COUNT(*) FROM questions older WHERE older.created_at < q.created_at
+          OR (older.created_at = q.created_at AND older.id < q.id)) AS sequence
+      FROM questions q INNER JOIN candidate c ON c.id = q.id`)
+      .bind(...bindings).first<QuestionRow>();
+    return candidate ? hydrateQuestion(candidate) : null;
   }
   const rows = await getD1().prepare(`SELECT id, familiarity FROM questions ${where}`)
     .bind(...bindings).all<{ id: string; familiarity: number }>();
